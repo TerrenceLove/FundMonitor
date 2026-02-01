@@ -1,211 +1,101 @@
 import streamlit as st
-import pandas as pd
 import requests
 import json
 import time
-import re
-import plotly.graph_objects as go
+import pandas as pd
 from datetime import datetime
 
+# --- 1. 页面基础配置 (移动端适配) ---
+st.set_page_config(page_title="Gemini 多基金智能对账单", layout="centered")
 
-# --- 1. 从后台配置 (Secrets) 加载初始化数据 ---
-# 如果后台没配置，则使用默认值
-def get_default_config():
-    if "portfolio" in st.secrets:
-        return st.secrets["portfolio"]
-    else:
-        # 如果后台完全没配置，返回一个空的初始模版
-        return {"code": "025209", "principal": 0.0, "init_profit": 0.0}
-
-# 页面配置
-st.set_page_config(page_title="Gemini 智能决策系统-云端版")
-
-# 初始化数据
-default_data = get_default_config()
-
-# --- 2. 侧边栏：显示当前的后台配置 ---
-with st.sidebar:
-    st.header("⚙️ 云端配置预览")
-    st.write(f"**当前监听代码：** `{default_data['code']}`")
-    st.write(f"**预设本金：** `{default_data['principal']}` 元")
-    st.write(f"**预设收益：** `{default_data['init_profit']}` 元")
-    st.info("💡 如需修改上述数据，请前往 Streamlit Cloud 后台的 Secrets 模块。")
-
-# --- 3. 主界面逻辑 (直接引用配置好的数据) ---
-st.title("🛡️ Gemini 智能决策系统 (云端持久版)")
-
-p_code = default_data['code']
-p_principal = float(default_data['principal'])
-p_profit = float(default_data['init_profit'])
-
-if st.button(f"🚀 立即对 {p_code} 执行深度分析"):
-    with st.spinner("从官方接口拉取最新数据..."):
-        try:
-            # 这里的分析逻辑保持和你之前的一致
-            hist = ak.fund_open_fund_info_em(fund=p_code, indicator="单位净值走势")
-            # ... 你的量化分析逻辑 ...
-            st.success(f"分析完成！当前本金 {p_principal} 元，总收益 {p_profit} 元。")
-        except:
-            st.error("分析失败，请检查代码或后台配置。")
-
-
-
-
-
-
-
-
-
-
-
-
-
-# 页面配置
-st.set_page_config(page_title="Gemini 基金高精度看板 Pro", layout="wide")
-
-# --- 初始化历史数据存储 (用于折线图) ---
-if 'history_profit' not in st.session_state:
-    st.session_state.history_profit = pd.DataFrame(columns=['time', 'profit', 'rate'])
-
-
-def get_official_nav(code):
-    """抓取该基金官方最新发布的单位净值 (高精度基准)"""
-    url = f"http://fund.eastmoney.com/pingzhongdata/{code}.js"
-    try:
-        res = requests.get(url, timeout=5)
-        pattern = r"Data_netWorthTrend = \[(.*?)\];"
-        match = re.search(pattern, res.text)
-        if match:
-            data_str = match.group(1)
-            latest_data = data_str.split('},')[-1]
-            nav_val = re.search(r'"y":(\d+\.\d+)', latest_data).group(1)
-            return float(nav_val)
-    except:
-        return None
-
-
-def get_valuation_data(code):
-    """抓取日内实时估值预测"""
+# --- 2. 核心数据抓取函数 ---
+def get_fund_realtime(code):
+    """从接口抓取实时估值、名称和涨跌幅"""
     url = f"http://fundgz.1234567.com.cn/js/{code}.js?rt={int(time.time())}"
     try:
-        res = requests.get(url, timeout=3)
-        return json.loads(res.text[res.text.find('{'):res.text.rfind('}') + 1])
+        res = requests.get(url, timeout=5)
+        # 提取并解析 JSON
+        content = res.text
+        json_str = content[content.find('{'):content.rfind('}')+1]
+        data = json.loads(json_str)
+        return {
+            "name": data['name'],       # 基金名称
+            "jz_date": data['jzrq'],    # 上次净值日期
+            "last_nav": float(data['dwjz']), # 上次单位净值
+            "est_nav": float(data['gsz']),   # 实时估值净值
+            "est_rate": float(data['gszzl']), # 实时涨跌幅 (%)
+            "update_time": data['gztime']    # 估值更新时间
+        }
     except:
         return None
 
+# --- 3. 主界面显示 ---
+st.title("🛡️ Gemini 多基金智能看板")
+st.caption(f"数据实时同步中 | 当前时间: {datetime.now().strftime('%H:%M:%S')}")
 
-# --- 侧边栏：资产精准录入 ---
-with st.sidebar:
-    st.header("🎯 资产精准录入")
-    with st.form("input_form"):
-        f_code = st.text_input("基金代码", "025209")
-        f_principal = st.number_input("持有本金 (元)", min_value=0.0, value=10000.0)
-        f_profit = st.number_input("当前总持有收益 (元)", value=500.0)
-        st.info("💡 提示：系统将以官方最新净值为起点，叠加日内波动计算实时损益。")
-        submit = st.form_submit_button("同步数据并重置图表")
+# 检查 Secrets 配置
+if "funds" not in st.secrets:
+    st.error("❌ 未在后台发现 [[funds]] 配置，请检查 Streamlit Secrets 填写是否正确。")
+    st.stop()
 
-    if submit:
-        off_nav = get_official_nav(f_code)
-        st.session_state['portfolio'] = {
-            "code": f_code,
-            "principal": f_principal,
-            "init_profit": f_profit,
-            "base_nav": off_nav
-        }
-        # 重置折线图历史
-        st.session_state.history_profit = pd.DataFrame(columns=['time', 'profit', 'rate'])
-        st.success(f"同步成功！官方基准净值：{off_nav}")
+funds_list = st.secrets["funds"]
 
-    if st.button("🗑️ 清空图表历史"):
-        st.session_state.history_profit = pd.DataFrame(columns=['time', 'profit', 'rate'])
-        st.rerun()
+# 汇总变量
+total_principal = 0.0
+total_current_profit = 0.0
+summary_data = []
 
-# --- 主界面 ---
-st.title("🛡️ 基金实时盈亏清算看板 Pro")
-st.caption(f"当前时间：{datetime.now().strftime('%H:%M:%S')} | 基准源：官方历史净值接口")
+# --- 4. 循环处理每一个基金 ---
+for fund in funds_list:
+    f_code = fund["code"]
+    f_p = float(fund["principal"])
+    f_init_profit = float(fund["init_profit"])
+    
+    # 获取实时行情
+    realtime = get_fund_realtime(f_code)
+    
+    if realtime:
+        # 计算逻辑
+        # 今日盈亏 = (本金 + 历史收益) * 今日涨跌幅%
+        day_profit = (f_p + f_init_profit) * (realtime['est_rate'] / 100)
+        # 累计总收益 = 历史收益 + 今日预估盈亏
+        total_profit = f_init_profit + day_profit
+        # 实时总市值
+        total_value = f_p + total_profit
+        
+        # 累加汇总
+        total_principal += f_p
+        total_current_profit += total_profit
+        
+        # UI 显示：使用折叠框节省手机屏幕空间
+        with st.expander(f"📈 {realtime['name']} ({f_code})", expanded=True):
+            # 第一行：实时涨跌指标
+            c1, c2, c3 = st.columns(3)
+            c1.metric("实时估值", f"{realtime['est_nav']:.4f}")
+            c2.metric("估值涨跌", f"{realtime['est_rate']}%", f"{realtime['est_rate']}%")
+            c3.metric("今日损益", f"¥{day_profit:,.2f}")
+            
+            # 第二行：资产详情
+            col1, col2 = st.columns(2)
+            col1.write(f"**持有本金:** ¥{f_p:,.2f}")
+            col1.write(f"**累计收益:** ¥{total_profit:,.2f}")
+            col2.write(f"**预估当前市值:** ¥{total_value:,.2f}")
+            col2.caption(f"更新时间: {realtime['update_time']}")
+    else:
+        st.warning(f"⚠️ 基金 {f_code} 数据请求超时，请检查代码或稍后重试。")
 
-if 'portfolio' in st.session_state:
-    p = st.session_state['portfolio']
-    val_data = get_valuation_data(p['code'])
-
-    if val_data:
-        # 1. 核心计算逻辑
-        off_nav = get_official_nav(p['code'])
-        est_nav = float(val_data['gsz'])
-
-        # 计算日内涨跌幅 (相对于官方最新公布值的偏离度)
-        current_day_pct = (est_nav - off_nav) / off_nav
-
-        # 收益计算
-        day_earn = (p['principal'] + p['init_profit']) * current_day_pct
-        total_earn = p['init_profit'] + day_earn
-        total_rate = (total_earn / p['principal']) * 100 if p['principal'] > 0 else 0
-
-        # 2. 记录历史数据 (用于绘图)
-        now_time = datetime.now().strftime('%H:%M:%S')
-        new_record = pd.DataFrame({
-            'time': [now_time],
-            'profit': [round(total_earn, 2)],
-            'rate': [round(total_rate, 2)]
-        })
-        # 避免重复记录同一秒的数据
-        if st.session_state.history_profit.empty or st.session_state.history_profit.iloc[-1]['time'] != now_time:
-            st.session_state.history_profit = pd.concat([st.session_state.history_profit, new_record],
-                                                        ignore_index=True)
-
-        # 3. 顶部指标卡片
-        c1, c2, c3 = st.columns(3)
-        c1.metric("今日预估损益", f"¥{day_earn:,.2f}", f"{current_day_pct * 100:.2f}%")
-        c2.metric("累计总持有收益", f"¥{total_earn:,.2f}", f"{total_rate:.2f}%")
-        c3.metric("预估当前总资产", f"¥{(p['principal'] + total_earn):,.2f}")
-
-        # --- 📈 实时收益折线图 (可隐藏式) ---
-        st.markdown("---")
-        with st.expander("📊 查看实时收益波动曲线 (点击展开/隐藏)", expanded=True):
-            if len(st.session_state.history_profit) > 1:
-                fig = go.Figure()
-                # 绘制收益金额曲线
-                fig.add_trace(go.Scatter(
-                    x=st.session_state.history_profit['time'],
-                    y=st.session_state.history_profit['profit'],
-                    mode='lines+markers',
-                    name='累计收益 (元)',
-                    line=dict(color='#ff4b4b', width=3),
-                    hovertemplate='时间: %{x}<br>收益: ¥%{y}'
-                ))
-                fig.update_layout(
-                    hovermode="x unified",
-                    height=400,
-                    margin=dict(l=0, r=0, t=20, b=0),
-                    xaxis_title="监控时间",
-                    yaxis_title="收益金额 (元)",
-                    template="plotly_white"
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("正在采集实时波动数据，请保持页面开启或点击刷新按钮...")
-
-        # 4. 数据对账单
-        st.subheader("📋 数据对账清单")
-        comparison = pd.DataFrame([{
-            "基金名称": val_data['name'],
-            "代码": p['code'],
-            "官方最新净值": f"{off_nav:.4f}",
-            "日内预估净值": f"{est_nav:.4f}",
-            "基准偏离度": f"{current_day_pct * 100:.2f}%",
-            "估值更新时间": val_data['gztime']
-        }])
-        st.table(comparison)
-        st.info("💡 提示：折线图会记录你每次刷新时的收益数值。建议在交易时段保持页面开启并定时刷新。")
-
-    if st.button("🔄 立即手动刷新"):
-        st.rerun()
-else:
-    st.warning("⬅️ 请在左侧侧边栏录入本金和当前收益，系统将自动对齐官方数据。")
-
-# 底部说明
+# --- 5. 底部全账户资产汇总 ---
 st.markdown("---")
-st.caption("注：折线图数据存储在浏览器会话中，刷新页面或重置侧边栏将重新开始记录。")
+st.subheader("💰 总资产全览")
 
-###使用方法： streamlit run 基金实时预测.py
+m1, m2, m3 = st.columns(3)
+m1.metric("总投入本金", f"¥{total_principal:,.2f}")
+total_rate = (total_current_profit / total_principal * 100) if total_principal > 0 else 0
+m2.metric("累计总收益", f"¥{total_current_profit:,.2f}", f"{total_rate:.2f}%")
+m3.metric("实时总市值", f"¥{(total_principal + total_current_profit):,.2f}")
 
+# 刷新按钮
+if st.button("🔄 立即同步最新行情", use_container_width=True):
+    st.rerun()
+
+st.info("💡 提示：系统已自动通过 6 位代码匹配基金名称，无需手动输入。")
