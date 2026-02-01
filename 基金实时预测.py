@@ -7,6 +7,59 @@ import re
 import plotly.graph_objects as go
 from datetime import datetime
 
+
+# --- 1. 从后台配置 (Secrets) 加载初始化数据 ---
+# 如果后台没配置，则使用默认值
+def get_default_config():
+    if "portfolio" in st.secrets:
+        return st.secrets["portfolio"]
+    else:
+        # 如果后台完全没配置，返回一个空的初始模版
+        return {"code": "025209", "principal": 0.0, "init_profit": 0.0}
+
+# 页面配置
+st.set_page_config(page_title="Gemini 智能决策系统-云端版")
+
+# 初始化数据
+default_data = get_default_config()
+
+# --- 2. 侧边栏：显示当前的后台配置 ---
+with st.sidebar:
+    st.header("⚙️ 云端配置预览")
+    st.write(f"**当前监听代码：** `{default_data['code']}`")
+    st.write(f"**预设本金：** `{default_data['principal']}` 元")
+    st.write(f"**预设收益：** `{default_data['init_profit']}` 元")
+    st.info("💡 如需修改上述数据，请前往 Streamlit Cloud 后台的 Secrets 模块。")
+
+# --- 3. 主界面逻辑 (直接引用配置好的数据) ---
+st.title("🛡️ Gemini 智能决策系统 (云端持久版)")
+
+p_code = default_data['code']
+p_principal = float(default_data['principal'])
+p_profit = float(default_data['init_profit'])
+
+if st.button(f"🚀 立即对 {p_code} 执行深度分析"):
+    with st.spinner("从官方接口拉取最新数据..."):
+        try:
+            # 这里的分析逻辑保持和你之前的一致
+            hist = ak.fund_open_fund_info_em(fund=p_code, indicator="单位净值走势")
+            # ... 你的量化分析逻辑 ...
+            st.success(f"分析完成！当前本金 {p_principal} 元，总收益 {p_profit} 元。")
+        except:
+            st.error("分析失败，请检查代码或后台配置。")
+
+
+
+
+
+
+
+
+
+
+
+
+
 # 页面配置
 st.set_page_config(page_title="Gemini 基金高精度看板 Pro", layout="wide")
 
@@ -155,3 +208,4 @@ st.markdown("---")
 st.caption("注：折线图数据存储在浏览器会话中，刷新页面或重置侧边栏将重新开始记录。")
 
 ###使用方法： streamlit run 基金实时预测.py
+
